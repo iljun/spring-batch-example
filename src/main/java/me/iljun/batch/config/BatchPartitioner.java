@@ -12,21 +12,34 @@ import java.util.Map;
 public class BatchPartitioner implements Partitioner {
 
     private final AccountRepository accountRepository;
+
     public BatchPartitioner(AccountRepository accountRepository) {
         this.accountRepository = accountRepository;
     }
 
     @Override
     public Map<String, ExecutionContext> partition(int gridSize) {
-        List<Account> accounts = accountRepository.findAll();
+        long maxId = accountRepository.findMaxId();
+        long size = maxId / gridSize + 1;
+
         Map<String, ExecutionContext> partitionResult = new HashMap<>();
 
-        accounts.stream()
-                .forEach(account -> {
-                    ExecutionContext executionContext = new ExecutionContext();
-                    long key = account.getId() % gridSize;
-                    partitionResult.put(String.format("partition%s", key), executionContext);
-                });
+        long cursor = 0;
+        long start = 0;
+        long end = start + size - 1;
+
+        while (start <= end) {
+            ExecutionContext executionContext = new ExecutionContext();
+            partitionResult.put("partition" + cursor, executionContext);
+
+            if (end >= maxId) {
+                end = maxId;
+            }
+
+            start += size;
+            end += size;
+            cursor++;
+        }
 
         return partitionResult;
     }

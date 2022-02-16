@@ -7,12 +7,23 @@ import org.springframework.batch.core.Step;
 import org.springframework.batch.core.configuration.annotation.JobBuilderFactory;
 import org.springframework.batch.core.configuration.annotation.StepBuilderFactory;
 import org.springframework.batch.core.partition.support.TaskExecutorPartitionHandler;
+import org.springframework.batch.item.ItemProcessor;
 import org.springframework.batch.item.ItemReader;
 import org.springframework.batch.item.ItemWriter;
+import org.springframework.batch.item.database.JpaPagingItemReader;
+import org.springframework.batch.item.database.builder.JpaPagingItemReaderBuilder;
+import org.springframework.batch.item.database.orm.JpaNativeQueryProvider;
+import org.springframework.batch.item.database.orm.JpaQueryProvider;
+import org.springframework.batch.item.database.support.SqlPagingQueryProviderFactoryBean;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.task.TaskExecutor;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
+
+import javax.persistence.EntityManagerFactory;
+import java.util.HashMap;
+import java.util.Map;
 
 @Configuration
 public class Config {
@@ -23,12 +34,15 @@ public class Config {
     private final StepBuilderFactory stepBuilderFactory;
     private final JobBuilderFactory jobBuilderFactory;
     private final AccountRepository accountRepository;
+    private final EntityManagerFactory entityManagerFactory;
     public Config(StepBuilderFactory stepBuilderFactory,
                   JobBuilderFactory jobBuilderFactory,
-                  AccountRepository accountRepository) {
+                  AccountRepository accountRepository,
+                  EntityManagerFactory entityManagerFactory) {
         this.stepBuilderFactory = stepBuilderFactory;
         this.jobBuilderFactory = jobBuilderFactory;
         this.accountRepository = accountRepository;
+        this.entityManagerFactory = entityManagerFactory;
     }
 
 
@@ -73,8 +87,8 @@ public class Config {
     public Step step() {
         return stepBuilderFactory.get("step")
                 .<Account, Account>chunk(CHUNK_SIZE)
-                .reader(reader())
-                .writer(writer())
+                .reader(reader(null, null))
+                .writer(writer(null, null))
                 .build();
     }
 
@@ -84,15 +98,32 @@ public class Config {
     }
 
     @Bean(name = "reader")
-    public ItemReader<Account> reader() {
-        // TODO reader Config
-        return null;
+    public ItemReader<Account> reader(@Value("#{stepExecutionContext[minValue]}") Long minValue,
+                                      @Value("#{stepExecutionContext[maxValue]}") Long maxValue) {
+        return new JpaPagingItemReaderBuilder<Account>()
+                .name("jobReader")
+                .entityManagerFactory(entityManagerFactory)
+                .pageSize(CHUNK_SIZE)
+                .queryProvider(queryProvider(minValue, maxValue))
+                .parameterValues(new HashMap<>())
+                .build();
+    }
+
+    public JpaQueryProvider queryProvider(long minValue, long maxValue) {
+        JpaNativeQueryProvider provider = new JpaNativeQueryProvider();
+        provider.setSqlQuery(
+                "SELECT *" +
+                "FROM account" +
+                "WHERE id BETWEEN :minValue AND :maxValue"
+        );
+        return provider;
     }
 
     @Bean(name = "writer")
-    public ItemWriter<Account> writer() {
-        // TODO writer Config
-        return null;
+    public ItemWriter<Account> writer(
+            @Value("#{stepExecutionContext[minId]}") Long minValue,
+            @Value("#{stepExecutionContext[maxId]}") Long maxValue) {
+        return items -> accountRepository.saveAll(items);
     }
 
 }
